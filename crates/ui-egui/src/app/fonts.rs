@@ -79,9 +79,10 @@ impl SheetApp {
         }
         if self.prepared_fonts {
             ctx.set_fonts(theme::pinned_font_definitions());
-            theme::apply(ctx, self.ui.dark);
+            theme::apply_with_palette(ctx, self.ui.dark, self.palette.as_ref());
         } else {
-            SheetApp::setup_context_for_language(ctx, self.ui.dark, self.ui.language);
+            ctx.set_fonts(theme::font_definitions_for_language(self.ui.language));
+            theme::apply_with_palette(ctx, self.ui.dark, self.palette.as_ref());
         }
         self.fonts_set = true;
         // The rebuilt set has no workbook fonts yet: bind them again once it is active.

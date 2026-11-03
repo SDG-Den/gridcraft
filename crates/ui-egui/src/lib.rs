@@ -235,6 +235,11 @@ pub struct SheetApp {
     pub grid: grid::GridState,
     pub perf: Perf,
     pub fonts_ready: bool,
+    /// The suite palette the chrome follows, when one is installed (see
+    /// `craft_ui::theme::palette`). Native builds load it at startup and watch it.
+    pub palette: Option<craft_ui::theme::palette::Palette>,
+    #[cfg(not(target_arch = "wasm32"))]
+    palette_watcher: craft_ui::theme::PaletteWatcher,
     fonts_set: bool,
     /// Test harness set: rebuilds use the deterministic pinned font set instead of the host scan.
     prepared_fonts: bool,
