@@ -31,6 +31,7 @@ winit = { version = "0.30", default-features = false, features = ["x11"] }
 # Same craft-libs revision as the workspace's craft-update and craft-window (see the root
 # Cargo.toml).
 craft-print = { git = "https://github.com/SDG-Den/craft-libs", rev = "41276fb90a13865d39c288c7ef85d22cfebc52c9" }
+craft-settings = { workspace = true }
 craft-update = { workspace = true }
 rfd = { workspace = true }
 arboard = { workspace = true }

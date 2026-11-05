@@ -119,9 +119,14 @@ fn load_prefs(app: &mut SheetApp) {
         app.ui.language = language;
     }
     if let Ok(b) = std::fs::read(dir.join("prefs.json"))
-        && let Ok(p) = serde_json::from_slice(&b)
+        && let Ok(mut base) = serde_json::from_slice::<serde_json::Value>(&b)
     {
-        app.session.prefs = p;
+        if let Some(overlay) = craft_settings::overlay::load_overlay(&dir) {
+            craft_settings::overlay::merge(&mut base, overlay);
+        }
+        if let Ok(p) = serde_json::from_value(base) {
+            app.session.prefs = p;
+        }
     }
 }
 
