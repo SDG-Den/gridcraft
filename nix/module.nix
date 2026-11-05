@@ -16,6 +16,10 @@
   # The package of this flake; `flake.nix` passes it through `_module.args`, so importing the
   # module directly needs no overlay.
   gridcraftPackage ? pkgs.gridcraft,
+  # `flake.nix` passes the source build and the pre-built release binary separately. Importing the
+  # module directly falls back to `gridcraftPackage` and no binary.
+  gridcraftSourcePackage ? gridcraftPackage,
+  gridcraftBinaryPackage ? null,
   ...
 }:
 
@@ -52,10 +56,24 @@ in
   options.programs.gridcraft = {
     enable = mkEnableOption "GridCraft";
 
+    useBinary = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Install the pre-built Linux binary from `binary-url.json` when this system has one,
+        instead of building from source. Falls back to the source build when the file is missing
+        or the system is unsupported.
+      '';
+    };
+
     package = mkOption {
       type = types.package;
-      default = gridcraftPackage;
-      defaultText = lib.literalMD "the `gridcraft` package of this flake";
+      default =
+        if cfg.useBinary && gridcraftBinaryPackage != null then
+          gridcraftBinaryPackage
+        else
+          gridcraftSourcePackage;
+      defaultText = lib.literalMD "the pre-built binary from `binary-url.json`, or the source build";
       description = "The GridCraft package to install.";
     };
 

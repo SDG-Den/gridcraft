@@ -20,7 +20,7 @@
 {
   lib,
   stdenv,
-  rustPlatform,
+  craneLib,
   pkg-config,
   makeWrapper,
   # Windowing/GPU libraries: needed at build time by the crates that link them, at run time by the
@@ -85,125 +85,134 @@ let
   ];
 
 in
-rustPlatform.buildRustPackage {
-  pname = "gridcraft";
-  inherit version;
+let
+  commonArgs = {
+    pname = "gridcraft";
+    inherit version;
 
-  src = lib.cleanSourceWith {
-    src = lib.cleanSource root;
-    # The Nix files are not part of the build: editing them must not rebuild any Rust.
-    filter =
-      path: _type:
-      !(builtins.elem (baseNameOf path) [
-        "flake.nix"
-        "flake.lock"
-        "nix"
-      ]);
-  };
+    src = lib.cleanSourceWith {
+      src = lib.cleanSource root;
+      # The Nix files are not part of the build: editing them must not rebuild any Rust.
+      filter =
+        path: _type:
+        !(builtins.elem (baseNameOf path) [
+          "flake.nix"
+          "flake.lock"
+          "nix"
+        ]);
+    };
 
-  cargoLock = {
-    lockFile = root + "/Cargo.lock";
     # The git dependencies are pinned by revision in Cargo.lock.
-    allowBuiltinFetchGit = true;
+    cargoLock = root + "/Cargo.lock";
+
+    strictDeps = true;
+
+    nativeBuildInputs = [
+      pkg-config
+    ]
+    ++ lib.optionals isLinux [
+      makeWrapper
+      wayland-scanner
+      desktop-file-utils
+      appstream
+    ]
+    ++ lib.optionals (isLinux && autoAddDriverRunpath != null) [ autoAddDriverRunpath ];
+
+    buildInputs = lib.optionals isLinux [
+      wayland
+      libxkbcommon
+      libx11
+      libxcb
+      libxcursor
+      libxi
+      libxrandr
+    ];
+
+    env = lib.optionalAttrs (craft-fonts != null) {
+      CRAFT_FONTS_DIR = toString craft-fonts;
+      # A malformed font input must fail the build rather than silently ship without glyphs.
+      CRAFT_FONTS_REQUIRED = "1";
+    };
   };
 
   # Both binaries, as the .deb/.rpm install them (`packaging/linux/package.sh`).
-  cargoBuildFlags = [
-    "--locked"
-    "-p"
-    "gridcraft"
-    "-p"
-    "gridcraft-cli"
-  ];
+  binaryArgs = "-p gridcraft -p gridcraft-cli";
 
-  # Tests need corpora that are not in the tree and a GPU for the render comparisons; the sandbox
-  # has neither. `cargo xtask ci` is the gate; override to run them anyway.
-  doCheck = false;
+  cargoArtifacts = craneLib.buildDepsOnly (
+    commonArgs
+    // {
+      doCheck = false;
+      cargoBuildExtraArgs = binaryArgs;
+    }
+  );
+in
+craneLib.buildPackage (
+  commonArgs
+  // {
+    inherit cargoArtifacts binaryArgs;
 
-  strictDeps = true;
+    cargoBuildExtraArgs = binaryArgs;
 
-  nativeBuildInputs = [
-    pkg-config
-  ]
-  ++ lib.optionals isLinux [
-    makeWrapper
-    wayland-scanner
-    desktop-file-utils
-    appstream
-  ]
-  ++ lib.optionals (isLinux && autoAddDriverRunpath != null) [ autoAddDriverRunpath ];
+    # Tests need corpora that are not in the tree and a GPU for the render comparisons; the sandbox
+    # has neither. `cargo xtask ci` is the gate; override to run them anyway.
+    doCheck = false;
 
-  buildInputs = lib.optionals isLinux [
-    wayland
-    libxkbcommon
-    libx11
-    libxcb
-    libxcursor
-    libxi
-    libxrandr
-  ];
+    postInstall = ''
+      # Desktop integration: byte-for-byte the files the .deb/.rpm/.AppImage install.
+      install -Dm644 packaging/linux/${appId}.desktop $out/share/applications/${appId}.desktop
+      install -Dm644 packaging/linux/${appId}.mime.xml $out/share/mime/packages/${appId}.xml
+      cp -r assets/app-icon/hicolor $out/share/icons/
+      install -d $out/share/metainfo
+      substitute packaging/linux/${appId}.metainfo.xml.in \
+        $out/share/metainfo/${appId}.metainfo.xml \
+        --subst-var-by VERSION ${version} \
+        --subst-var-by DATE ${buildDate}
 
-  env = lib.optionalAttrs (craft-fonts != null) {
-    CRAFT_FONTS_DIR = toString craft-fonts;
-    # A malformed font input must fail the build rather than silently ship without glyphs.
-    CRAFT_FONTS_REQUIRED = "1";
-  };
+      # Licences for everything embedded in the binaries.
+      doc=$out/share/doc/gridcraft
+      for f in README.md LICENSE-MIT LICENSE-APACHE NOTICE ATTRIBUTION.md \
+        assets/app-icon/LICENSE.txt docs/brand/LICENSE-brand.txt; do
+        if [ -f "$f" ]; then install -Dm644 "$f" "$doc/$(basename "$f")"; fi
+      done
+    ''
+    + lib.optionalString (craft-fonts != null) ''
+      for lic in ${toString craft-fonts}/fonts/*/OFL.txt; do
+        install -Dm644 "$lic" "$doc/OFL-$(basename "$(dirname "$lic")").txt"
+      done
+    ''
+    + lib.optionalString isLinux ''
+      desktop-file-validate $out/share/applications/${appId}.desktop
+      XDG_CACHE_HOME=$TMPDIR/.cache appstreamcli validate --no-net \
+        $out/share/metainfo/${appId}.metainfo.xml
 
-  postInstall = ''
-    # Desktop integration: byte-for-byte the files the .deb/.rpm/.AppImage install.
-    install -Dm644 packaging/linux/${appId}.desktop $out/share/applications/${appId}.desktop
-    install -Dm644 packaging/linux/${appId}.mime.xml $out/share/mime/packages/${appId}.xml
-    cp -r assets/app-icon/hicolor $out/share/icons/
-    install -d $out/share/metainfo
-    substitute packaging/linux/${appId}.metainfo.xml.in \
-      $out/share/metainfo/${appId}.metainfo.xml \
-      --subst-var-by VERSION ${version} \
-      --subst-var-by DATE ${buildDate}
-
-    # Licences for everything embedded in the binaries.
-    doc=$out/share/doc/gridcraft
-    for f in README.md LICENSE-MIT LICENSE-APACHE NOTICE ATTRIBUTION.md \
-      assets/app-icon/LICENSE.txt docs/brand/LICENSE-brand.txt; do
-      if [ -f "$f" ]; then install -Dm644 "$f" "$doc/$(basename "$f")"; fi
-    done
-  ''
-  + lib.optionalString (craft-fonts != null) ''
-    for lic in ${toString craft-fonts}/fonts/*/OFL.txt; do
-      install -Dm644 "$lic" "$doc/OFL-$(basename "$(dirname "$lic")").txt"
-    done
-  ''
-  + lib.optionalString isLinux ''
-    desktop-file-validate $out/share/applications/${appId}.desktop
-    XDG_CACHE_HOME=$TMPDIR/.cache appstreamcli validate --no-net \
-      $out/share/metainfo/${appId}.metainfo.xml
-
-    # makeWrapper keeps the binaries working when the libs above are only dlopen'd.
-    for bin in ${lib.concatStringsSep " " (map (b: "$out/bin/" + b) binaries)}; do
-      wrapProgram "$bin" --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath runtimeLibs}"
-    done
-  '';
-
-  passthru = {
-    # Shared with the dev shell so `cargo run` inside `nix develop` finds the same dlopen'd libs.
-    inherit runtimeLibs;
-  };
-
-  meta = {
-    description = "Spreadsheet, formulas and charts";
-    longDescription = ''
-      GridCraft is an open-source native spreadsheet: it opens and saves .xlsx workbooks and
-      CSV/TSV files, evaluates hundreds of worksheet functions, and formats, sorts, filters and
-      charts data. It ships with gridcraft-cli, a headless command runner and MCP server for AI
-      agents.
+      # makeWrapper keeps the binaries working when the libs above are only dlopen'd.
+      for bin in ${lib.concatStringsSep " " (map (b: "$out/bin/" + b) binaries)}; do
+        wrapProgram "$bin" --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath runtimeLibs}"
+      done
     '';
-    homepage = "https://getartcraft.com/apps/gridcraft";
-    license = with lib.licenses; [
-      mit
-      asl20
-    ];
-    sourceProvenance = with lib.sourceTypes; [ fromSource ];
-    platforms = lib.platforms.linux ++ lib.platforms.darwin;
-    # `nix run` and the desktop entry both start the GUI.
-    mainProgram = "gridcraft";
-  };
-}
+
+    passthru = {
+      # Shared with the dev shell so `cargo run` inside `nix develop` finds the same dlopen'd libs.
+      inherit runtimeLibs;
+    };
+
+    meta = {
+      description = "Spreadsheet, formulas and charts";
+      longDescription = ''
+        GridCraft is an open-source native spreadsheet: it opens and saves .xlsx workbooks and
+        CSV/TSV files, evaluates hundreds of worksheet functions, and formats, sorts, filters and
+        charts data. It ships with gridcraft-cli, a headless command runner and MCP server for AI
+        agents.
+      '';
+      homepage = "https://getartcraft.com/apps/gridcraft";
+      license = with lib.licenses; [
+        mit
+        asl20
+      ];
+      sourceProvenance = with lib.sourceTypes; [ fromSource ];
+      platforms = lib.platforms.linux ++ lib.platforms.darwin;
+      # `nix run` and the desktop entry both start the GUI.
+      mainProgram = "gridcraft";
+    };
+  }
+)
