@@ -354,3 +354,77 @@ fn fedora_package_folders_are_searched_after_the_other_linux_layouts() {
     let noto = mono.iter().position(|p| p == "/usr/share/fonts/google-noto-vf/NotoSansMono[wght].ttf");
     assert!(noto.is_some() && noto.unwrap_or(0) + 1 == mono.len(), "Fedora's default Noto Sans Mono must be the last resort: {mono:?}");
 }
+
+#[test]
+/// A dark palette maps the core chrome and keeps its own family, even when light was requested.
+fn a_dark_palette_maps_the_core_chrome() {
+    let palette = Palette::dark();
+    let t = Tokens::for_palette(false, &palette);
+    assert!(t.dark, "the palette family wins over the requested kind");
+    assert_eq!(t.window, palette.background());
+    assert_eq!(t.ribbon, palette.surface());
+    assert_eq!(t.ribbon_border, palette.outline());
+    assert_eq!(t.text, palette.text());
+    assert_eq!(t.text_dim, palette.text_muted());
+    assert_eq!(t.accent, palette.accent());
+    assert_eq!(t.sel_border, palette.accent());
+    assert_eq!(t.danger, palette.danger());
+    assert_eq!(t.warning_fill, palette.warning());
+    assert_eq!(t.on_accent, palette.contrast_text());
+    assert_eq!(t.grid_bg, Tokens::dark().grid_bg, "the sheet stays built-in");
+    assert_eq!(t.syntax, Tokens::dark().syntax, "syntax colours stay built-in");
+}
+
+#[test]
+/// A light palette maps the core chrome and keeps its own family, even when dark was requested.
+fn a_light_palette_maps_the_core_chrome() {
+    let palette = Palette::light();
+    let t = Tokens::for_palette(true, &palette);
+    assert!(!t.dark, "the palette family wins over the requested kind");
+    assert_eq!(t.window, palette.background());
+    assert_eq!(t.ribbon, palette.surface());
+    assert_eq!(t.ribbon_border, palette.outline());
+    assert_eq!(t.text, palette.text());
+    assert_eq!(t.text_dim, palette.text_muted());
+    assert_eq!(t.accent, palette.accent());
+    assert_eq!(t.status_bar, palette.background());
+    assert_eq!(t.menu_bg, palette.surface());
+    assert_eq!(t.on_accent, palette.contrast_text());
+}
+
+#[test]
+/// The palette family decides the active tokens; without a palette the saved kind applies.
+fn the_palette_family_wins_over_the_saved_kind() {
+    let ctx = egui::Context::default();
+    let light = Palette::light();
+    apply_with_palette(&ctx, true, Some(&light));
+    let t = Tokens::get(&ctx);
+    assert!(!t.dark);
+    assert_eq!(t.window, light.background());
+
+    let dark = Palette::dark();
+    apply_with_palette(&ctx, false, Some(&dark));
+    let t = Tokens::get(&ctx);
+    assert!(t.dark);
+    assert_eq!(t.window, dark.background());
+}
+
+#[test]
+/// No palette leaves the built-in tokens unchanged.
+fn a_missing_palette_keeps_the_built_in_tokens() {
+    let ctx = egui::Context::default();
+    apply_with_palette(&ctx, true, None);
+    assert_eq!(Tokens::get(&ctx), Tokens::dark());
+    apply_with_palette(&ctx, false, None);
+    assert_eq!(Tokens::get(&ctx), Tokens::light());
+}
+
+#[test]
+/// Text drawn on the accent fill stays readable for both palette families.
+fn palette_accent_text_meets_contrast() {
+    for palette in [Palette::dark(), Palette::light()] {
+        let t = Tokens::for_palette(true, &palette);
+        let ratio = contrast(t.on_accent, t.accent);
+        assert!(ratio >= 4.5, "on_accent is {ratio:.2}:1 on the accent for {}", palette.name);
+    }
+}

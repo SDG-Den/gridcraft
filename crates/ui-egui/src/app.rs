@@ -55,6 +55,12 @@ impl SheetApp {
             },
             perf: Perf::default(),
             fonts_ready: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            palette: craft_ui::theme::palette::Palette::load().map(|loaded| loaded.palette),
+            #[cfg(target_arch = "wasm32")]
+            palette: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            palette_watcher: craft_ui::theme::palette::PaletteWatcher::from_env(),
             fonts_set: false,
             prepared_fonts: false,
             fonts_bound: Vec::new(),
@@ -100,7 +106,11 @@ impl SheetApp {
     /// Sets up fonts and visuals for a specific persisted interface language.
     pub fn setup_context_for_language(ctx: &egui::Context, dark: bool, language: i18n::Language) {
         ctx.set_fonts(theme::font_definitions_for_language(language));
-        theme::apply(ctx, dark);
+        #[cfg(not(target_arch = "wasm32"))]
+        let palette = craft_ui::theme::palette::Palette::load().map(|loaded| loaded.palette);
+        #[cfg(target_arch = "wasm32")]
+        let palette: Option<craft_ui::theme::palette::Palette> = None;
+        theme::apply_with_palette(ctx, dark, palette.as_ref());
     }
 
     /// Per-frame logic (control channel, screenshots). Call before `ui`.
@@ -116,6 +126,8 @@ impl SheetApp {
         if let Some(answer) = self.desktop_theme.take_change() {
             self.desktop_dark = Some(answer);
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.poll_palette(ctx);
         self.sync_theme_preference(ctx);
         self.sync_input_options(ctx);
         // The geometry captures are bound to. Native frames recorded it from their fresh

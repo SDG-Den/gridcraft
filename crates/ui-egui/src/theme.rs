@@ -16,6 +16,7 @@
 
 use std::sync::Arc;
 
+use craft_ui::theme::palette::Palette;
 #[cfg(not(target_arch = "wasm32"))]
 use egui::epaint::text::Blob;
 use egui::{Color32, FontData, FontDefinitions, FontFamily, FontId, Stroke, Visuals};
@@ -148,6 +149,15 @@ const fn rgb(hex: u32) -> Color32 {
     Color32::from_rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
 }
 
+fn mix(from: Color32, to: Color32, amount: f32) -> Color32 {
+    from.lerp_to_gamma(to, amount.clamp(0.0, 1.0))
+}
+
+/// Black or white, whichever reads better on `background`.
+fn ink_on(background: Color32) -> Color32 {
+    if luminance(background) > 0.179 { Color32::BLACK } else { Color32::WHITE }
+}
+
 /// Reference colours on the white sheet, the same in both themes (the sheet does not follow the
 /// theme). The light theme's formula bar is white too, so it uses them as well.
 const SHEET_REF_COLORS: [Color32; 8] =
@@ -189,6 +199,60 @@ impl Tokens {
 
     pub fn dark() -> Tokens {
         Tokens::palette(true)
+    }
+
+    /// The built-in token set for `palette`'s family, with the core chrome overridden by the
+    /// palette. Domain colours (cells, gridlines, the sheet, formulas and syntax) keep their
+    /// built-in values.
+    ///
+    /// The palette's own light/dark family wins over `_requested_dark`: a light palette must not
+    /// keep dark stock visuals, and the reverse.
+    pub fn for_palette(_requested_dark: bool, palette: &Palette) -> Tokens {
+        let dark = palette.is_dark();
+        let window = palette.background();
+        let surface = palette.surface();
+        let surface_alt = palette.surface_alt();
+        let outline = palette.outline();
+        let text = palette.text();
+        let muted = palette.text_muted();
+        let accent = palette.accent();
+        let mut t = Tokens::palette(dark);
+        t.window = window;
+        t.ribbon = surface;
+        t.ribbon_border = outline;
+        t.text = text;
+        t.text_dim = muted;
+        t.text_disabled = mix(muted, window, 0.45);
+        t.accent = accent;
+        t.accent_dark = mix(accent, Color32::BLACK, 0.3);
+        t.accent_soft = mix(window, accent, if dark { 0.22 } else { 0.14 });
+        t.hover = surface_alt;
+        t.pressed = mix(surface_alt, outline, 0.5);
+        t.separator = outline;
+        t.header_bg = surface;
+        t.header_text = text;
+        t.header_line = outline;
+        t.header_sel_bg = mix(window, accent, 0.2);
+        t.header_sel_text = accent;
+        t.header_all_bg = mix(window, accent, 0.3);
+        t.sel_fill = Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), if dark { 0x24 } else { 0x1c });
+        t.sel_border = accent;
+        t.input_bg = if dark { mix(window, Color32::BLACK, 0.25) } else { mix(surface, Color32::WHITE, 0.6) };
+        t.input_border = outline;
+        t.tab_bar = window;
+        t.tab_active = t.input_bg;
+        t.status_bar = window;
+        t.menu_bg = surface;
+        t.shadow = if dark { Color32::from_black_alpha(90) } else { Color32::from_black_alpha(40) };
+        t.danger = palette.danger();
+        t.warning_fill = palette.warning();
+        t.warning_ink = ink_on(t.warning_fill);
+        t.notice_warn_bg = mix(window, t.warning_fill, 0.16);
+        t.notice_warn_border = mix(window, t.warning_fill, 0.4);
+        t.notice_info_bg = mix(window, accent, 0.1);
+        t.notice_info_border = mix(window, accent, 0.35);
+        t.on_accent = palette.contrast_text();
+        t
     }
 
     /// One palette for both modes: each colour is written once, with its light and dark values.
@@ -270,6 +334,9 @@ impl Tokens {
     }
 
     pub fn get(ctx: &egui::Context) -> Tokens {
+        if let Some(tokens) = ctx.data(|data| data.get_temp::<Tokens>(tokens_id())) {
+            return tokens;
+        }
         if ctx.global_style().visuals.dark_mode { Tokens::dark() } else { Tokens::light() }
     }
 
@@ -300,13 +367,29 @@ pub fn contrast(a: Color32, b: Color32) -> f32 {
     (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
 }
 
+/// The id the active tokens are cached under in the context, so [`Tokens::get`] sees a palette
+/// without reloading it.
+fn tokens_id() -> egui::Id {
+    egui::Id::unique("gridcraft.active_tokens")
+}
+
 /// Installs light and dark token visuals in both theme slots, keeps the 2-3 px widget and 8-10 px window/menu corner radii from 0.36, and sets spacing, text styles and the active theme.
 pub fn apply(ctx: &egui::Context, dark: bool) {
+    apply_with_palette(ctx, dark, None);
+}
+
+/// [`apply`], following `palette` for the chrome when one is installed. The palette's family
+/// decides the active theme and the stock visuals; without a palette `dark` does.
+pub fn apply_with_palette(ctx: &egui::Context, dark: bool, palette: Option<&Palette>) {
     // Install both palettes before System can switch between the style slots.
     for theme in [egui::Theme::Light, egui::Theme::Dark] {
-        let dark = theme == egui::Theme::Dark;
-        let t = if dark { Tokens::dark() } else { Tokens::light() };
-        let mut v = if dark { Visuals::dark() } else { Visuals::light() };
+        let slot_dark = palette.map_or(theme == egui::Theme::Dark, Palette::is_dark);
+        let t = match palette {
+            Some(palette) => Tokens::for_palette(slot_dark, palette),
+            None if slot_dark => Tokens::dark(),
+            None => Tokens::light(),
+        };
+        let mut v = if t.dark { Visuals::dark() } else { Visuals::light() };
         v.panel_fill = t.window;
         v.window_fill = t.menu_bg;
         v.extreme_bg_color = t.input_bg;
@@ -330,8 +413,15 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
         v.popup_shadow = egui::epaint::Shadow { offset: [0, 4], blur: 16, spread: 0, color: t.shadow };
         ctx.set_visuals_of(theme, v);
     }
+    let active_dark = palette.map_or(dark, Palette::is_dark);
+    let active = match palette {
+        Some(palette) => Tokens::for_palette(active_dark, palette),
+        None if active_dark => Tokens::dark(),
+        None => Tokens::light(),
+    };
+    ctx.data_mut(|data| data.insert_temp(tokens_id(), active));
     ctx.options_mut(|o| o.fallback_theme = egui::Theme::Light);
-    ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
+    ctx.set_theme(if active_dark { egui::Theme::Dark } else { egui::Theme::Light });
     ctx.all_styles_mut(|s| {
         s.spacing.item_spacing = egui::vec2(6.0, 4.0);
         s.spacing.button_padding = egui::vec2(6.0, 3.0);

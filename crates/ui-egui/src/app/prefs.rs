@@ -1,4 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
+use super::theme;
+#[cfg(not(target_arch = "wasm32"))]
 use super::updates_ui;
 use super::{SheetApp, desktop_theme};
 
@@ -10,15 +12,39 @@ impl SheetApp {
         self.desktop_theme = desktop_theme::DesktopTheme::start();
     }
 
-    /// Follows the desktop/system theme preference and records the effective theme.
+    /// Reloads the suite palette when its file changes. Polls only while the viewport is visible,
+    /// so a hidden window does not wake every 400 ms.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn poll_palette(&mut self, ctx: &egui::Context) {
+        let visible = ctx.input(|input| input.viewport().visible().unwrap_or(true));
+        if !visible {
+            return;
+        }
+        let Some(loaded) = self.palette_watcher.poll(ctx) else { return };
+        self.palette = Some(loaded.palette);
+        theme::apply_with_palette(ctx, self.ui.dark, self.palette.as_ref());
+        ctx.request_repaint();
+    }
+
+    /// Follows the desktop/system theme preference and records the effective theme. A palette
+    /// decides the family when one is installed; the saved (or system) choice applies without one.
     pub(super) fn sync_theme_preference(&mut self, ctx: &egui::Context) {
-        let preference = match (
-            self.ui.system_theme,
-            ctx.system_theme().or_else(|| self.desktop_dark.map(|d| if d { egui::Theme::Dark } else { egui::Theme::Light })),
-        ) {
-            (true, Some(egui::Theme::Dark)) => egui::ThemePreference::Dark,
-            (true, Some(egui::Theme::Light)) => egui::ThemePreference::Light,
-            _ => self.ui.theme_preference(),
+        let preference = match &self.palette {
+            Some(palette) => {
+                if palette.is_dark() {
+                    egui::ThemePreference::Dark
+                } else {
+                    egui::ThemePreference::Light
+                }
+            }
+            None => match (
+                self.ui.system_theme,
+                ctx.system_theme().or_else(|| self.desktop_dark.map(|d| if d { egui::Theme::Dark } else { egui::Theme::Light })),
+            ) {
+                (true, Some(egui::Theme::Dark)) => egui::ThemePreference::Dark,
+                (true, Some(egui::Theme::Light)) => egui::ThemePreference::Light,
+                _ => self.ui.theme_preference(),
+            },
         };
         if ctx.options(|o| o.theme_preference) != preference {
             ctx.set_theme(preference);
