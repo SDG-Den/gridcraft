@@ -1,0 +1,8 @@
+{
+  "url": "https://github.com/SDG-Den/gridcraft/releases/download/binary-testing/gridcraft-0.15.0-linux-x86_64.tar.gz",
+  "hash": "sha256-pDv+Qn9zTkGDjmd25JVzTsspJRXhtcnMOPd0VNln3+o=",
+  "version": "0.15.0",
+  "tag": "binary-testing",
+  "system": "x86_64-linux",
+  "repo": "SDG-Den/gridcraft"
+}
